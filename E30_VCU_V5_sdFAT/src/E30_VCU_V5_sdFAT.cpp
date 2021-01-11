@@ -10,28 +10,22 @@
 #include <EEPROM.h>
 //#include <config.h>
 
-#define FORWARD 8
-#define NUETRAL 1
-#define REVERSE 2
+
 
 /////////// Pin Assignments /////////
 const int led = 13;
-
 const int lvRead = A0;
 const int backfeed = 24;
 const int wpump = 30;
 const int tachout = 16;
 const int speedout = 2; // tone() for frequency  12 will be permanent pin
 const int tempout = 6;
-const int steerInit = 5; //output pin 27
 const int sw12 = 28;
 const int blowerRead = A4;
 const int cabinHeat = 11;
 const int driveMode = 19;
 const int inclinometer = A1;
 
-///////////////////timer////////////////
-IntervalTimer encoder;
 
 /////////// Variables //////////////
 int rpm;
@@ -40,7 +34,6 @@ int hstemp;
 int amps;
 int potnom;
 int pot;
-float regenRamp;
 int tachfreq = 0;
 int speedfreq;
 int wpduty;
@@ -71,11 +64,6 @@ int peakPower;
 int power;
 int peakTemp;
 int peakAmps;
-int brakePedal;
-int underVoltTime;
-int shift;
-int screen;
-bool underVoltInit;
 //int angleAvg;
 float throtRamp;
 float ampMin;
@@ -105,7 +93,6 @@ bool startup;
 Smoothed <int> idleRamp;
 Smoothed <float> fslipRamp;
 Smoothed <int> angleAvg;
-Smoothed <int> tempAvg;
 
 
 ///////////// Timers /////////////
@@ -178,7 +165,6 @@ void setup() {
     pinMode(speedout, OUTPUT);
     pinMode(sw12, INPUT_PULLDOWN);
     pinMode(cabinHeat, OUTPUT);
-    pinMode(steerInit, OUTPUT);
     pinMode(driveMode, INPUT_PULLDOWN);
     pinMode(inclinometer, INPUT);
     analogWriteFrequency(wpump, 100);
@@ -202,45 +188,29 @@ void setup() {
     /////////////////
 
     Can0.begin(500000);
-
     
-    CAN_filter_t allPassFilter;
-    allPassFilter.ext = 1;
-    for (uint8_t filterNum = 8; filterNum < 16;filterNum++) { //only use half the available filters for the extended IDs
-        Can0.setFilter(allPassFilter, filterNum);
+    //set filters for standard
+    for (int i = 0; i < 8; i++)
+    {
+        Can0.setFilter(filter, i);
+    }
+    //set filters for extended
+    for (int i = 9; i < 13; i++)
+    {
+        Can0.setFilter(filter, i);
     }
 
-/*
-    CAN_filter_t mailbox_Filter;
-    Can0.setMask(0x7FF << 18, 4);    // bit shifting 18 bits left, mask is checking for a match of all 11 bits.
-    mailbox_Filter.id = 0x38E;      // Filter is looking for 0x05, so with a 'full match' requirement defined by the mask,
-    mailbox_Filter.ext = 0;         // this will be the only ID received in this mailbox.
-    mailbox_Filter.rtr = 0;
-    Can0.setFilter(mailbox_Filter, 4);
-
-    CAN_filter_t allBlockExtendedFilter;
-    allBlockExtendedFilter.id = 0x581;
-    allBlockExtendedFilter.ext = 0;                    // Notice: Extended bit is toggled to 1 (was 0 for Standard)
-    allBlockExtendedFilter.rtr = 0;
-    for (uint8_t filterNum = 5; filterNum < 16;filterNum++) {
-        Can0.setMask(0x581, filterNum);              // Notice: no bit-shifting for 29-bit Extended ID's!
-        Can0.setFilter(allBlockExtendedFilter, filterNum);
-    }
-    */
     //RTC_IER |= 0x10;  // Enable seconds IRQ from RTC peripheral
     //NVIC_ENABLE_IRQ(IRQ_RTC_SECOND); // Enable seconds IRS function in NVIC
 
     digitalWrite(led, HIGH);
     Serial.begin(1152000);
     Serial3.begin(9600);  //(19200);
-    //encoder.begin(shift_dir, 250000);
-     
+
+    
     idleRamp.begin(SMOOTHED_AVERAGE, 60);
     fslipRamp.begin(SMOOTHED_AVERAGE, 60);
     angleAvg.begin(SMOOTHED_EXPONENTIAL, 8);
-    tempAvg.begin(SMOOTHED_EXPONENTIAL, 8);
-   
-    digitalWrite(steerInit, LOW);
 
 
  
@@ -255,18 +225,10 @@ void loop() {
     while (Can0.available())
     {
         Can0.read(inMsg);
-        decodeCAN(); 
-        if (charge == 2) {
-            shift_dir();
-            chill();
-            idleThrottle();
-            regenStuff();
-        }  
-        //canread();
+        decodeCAN();  
         
     }
     charging();
-
     if (digitalRead(sw12) == LOW) {
         run = 0;
     }
@@ -274,23 +236,17 @@ void loop() {
     angle = analogRead(inclinometer);
     angleAvg.add(angle);
 
-
-    if (charge == 2) {
-
-        boostMap();
-    
-    }
-
+    modeSwitch();
     waterpump();
     dcdc();
     heater();  
-    resetwdog();  
-    powerSteer();
+    resetwdog(); 
+    boostMap();
+    idleThrottle();
+    regenStuff();
     powerCalc();   
   //test_params();
-    
-    tempAvg.add(mtemp);
-    tempduty = map(tempAvg.get(), 0, 90, 50, 205);
+    tempduty = map(mtemp, 0, 90, 50, 205);
     analogWrite(tempout, tempduty);
 
 
@@ -322,7 +278,7 @@ void loop() {
         
         MTP_loop(); 
     }
-    dcdc();
+
     resetwdog();
 }
 
@@ -394,54 +350,28 @@ void decodeCAN() {
         pot2 = ((inMsg.buf[3] << 8) + inMsg.buf[2]);
     }
 
-    else if (inMsg.id == 0x38E) {
-
-        brakePedal = ((inMsg.buf[4] << 8) + inMsg.buf[3])-4415;
-    }
-
-    else if (inMsg.id == 0x18FF11F2 && (inMsg.buf[6] == 3) && (inMsg.buf[2] == 2)) {
-
-        //shift = (inMsg.buf[3]);
-    }
-    else if (inMsg.id == 0x18FF0FF2) {
-
-        screen = (inMsg.buf[0]);
-
-    }
-
-    
 
 }
+
+
+
 
 
 void batteryTender() {
  
         lvRead_val = analogRead(lvRead);
 
-        if (lvRead_val < 920 && underVoltInit == false) {  //0-1023 (3.3v) range R1=510 ohm, R2= 150 ohm *breadboard voltage divider 510 long side*
-             
-            underVoltInit = true;  
+        if (lvRead_val < 920) {  //0-1023 (3.3v) range R1=510 ohm, R2= 150 ohm *breadboard voltage divider 510 long side*
+            
+            digitalWrite(backfeed, HIGH);
             tenderMillis = 0;
         }
-
-
-        if (tenderMillis > 5000 && lvRead_val < 920) {
-
-            digitalWrite(backfeed, HIGH);
-            underVoltInit = false;
-
-        }
-
-        if (tenderMillis > 800000) {
-
+        if ( tenderMillis > 800000){
+           
             digitalWrite(backfeed, LOW);
-            underVoltInit = false;
-
-        }
-        
-              
+                     
+        }       
         if (dir == 255) {
-
             digitalWrite( backfeed, LOW);
         } 
 }
@@ -478,7 +408,7 @@ void heater() {
 
     blower_val = analogRead(blowerRead);
 
-    if (blower_val > 500 && run == 1) {
+    if (blower_val > 500) {
         digitalWrite(cabinHeat, HIGH);
 
     }
@@ -510,11 +440,8 @@ void gaugeupdate() {
 
 void outputs() {
 
-    //Serial.print("runmode");
-    //Serial.println(run);
-
-    Serial3.print("brake pedal: ");
-    Serial3.println(brakePedal);
+    Serial.print("runmode");
+    Serial.println(run);
 
     Serial3.print("DC Voltage: ");
     Serial3.println(packVolt);
@@ -537,17 +464,6 @@ void outputs() {
 
     Serial3.print("Inclinometer: ");
     Serial3.println(angleAvg.get());
-
-    Serial3.print("Shift: ");
-    Serial3.println(shift);
-
-    Serial3.print("12v: ");
-    Serial3.println(lvRead_val);
-
-    Serial3.print("backfeed: ");
-    Serial3.println(digitalRead(backfeed));
-
-
     
 
     //Serial3.print("Pack1");
@@ -713,16 +629,25 @@ void resetwdog()
 
 void canSet(int index, float value) {
     int val = (value * 32);
+    int byte1;
+    int byte2;
+    int byte3;
+    int byte4;
+    byte1 = val & 0xFF;
+    byte2 = (val >> 8) & 0xFF;
+    byte3 = (val >> 16) & 0xFF;
+    byte4 = (val >> 24) & 0xFF;
+
     msg.id = 0x601; //set parameter ID
     msg.len = 8;
     msg.buf[0] = 0x40;
     msg.buf[1] = 0x00;
     msg.buf[2] = 0x20;
     msg.buf[3] = index;
-    msg.buf[4] = val & 0xFF;
-    msg.buf[5] = (val >> 8) & 0xFF;
-    msg.buf[6] = (val >> 16) & 0xFF;
-    msg.buf[7] = (val >> 24) & 0xFF;
+    msg.buf[4] = byte1;
+    msg.buf[5] = byte2;
+    msg.buf[6] = byte3;
+    msg.buf[7] = byte4;
     Can0.write(msg);
 }
 
@@ -816,8 +741,8 @@ void party() {
 void chill() {
 
     //boost
-    maxBoost = 1875;
-    minBoost = 1875;
+    maxBoost = 1720;
+    minBoost = 1720;
 
     //fweak
     if (pot > 1800 && pot < 3200) {
@@ -834,14 +759,14 @@ void chill() {
 
 
     //fslipmin
-    fslipmin = 3.08; //2.5; //was 2.3
+    fslipmin = 2.3;
     canSet(4, fslipmin);
 
 
     //fslipmax
     maxSlip = (3.08 * 32);
-    if (pot >= 3200) {
-        minSlip = map(pot, 3200, 4095, (fslipmin * 32), maxSlip);
+    if (pot >= 2800) {
+        minSlip = map(pot, 2800, 4095, (fslipmin * 32), maxSlip);
 
     }
     else { minSlip = (fslipmin * 32); }
@@ -918,35 +843,23 @@ void regenStuff() {
     maxRegen = 94;  //maximum full brake pressure regen value
    
 
-    if (brakePedal > 700 ) {
+    if (pot2 > 3700 ) {
         brkNomPedal = ((neg - (maxRegen * 32))/32); //sets POT2 value for maximum regen
     }
     else {
-        brkNomPedal = map(brakePedal, 1, 700, ((neg - (baseRegen * 32))/32), ((neg - (maxRegen * 32)))/32); //maps brake pedal regen between base and max
+        brkNomPedal = map(pot2, 600, 3700, ((neg - (baseRegen * 32))/32), ((neg - (maxRegen * 32)))/32); //maps brake pedal regen between base and max
     }
     canSet(53, brkNomPedal);
 
     //incline compensation
-    if (brakePedal < 3) {
-        if (angleAvg.get() >= 550 && angleAvg.get() < 600) {
-            baseRegen = map(angleAvg.get(), 550, 600, 10, 45);
-        }
-        else if (angleAvg.get() >= 600) {
-            baseRegen = 45;
-        }
-        else baseRegen = 10;
+    if (angleAvg.get() >= 550 && angleAvg.get() < 600) {
+        baseRegen = map(angleAvg.get(), 550, 600, 0, 45);
     }
-
-    //regenramp
-    
-    if (rpm <= 10000) {
-        regenRamp = map(rpm, 0, 10000, (32 * .1), (32 * .4));
+    else if (angleAvg.get() >= 600) {
+        baseRegen = 45;
     }
-    else regenRamp = (.4 * 32);
-    canSet(54, (regenRamp / 32));
-    
+    else baseRegen = 0;
 
-    
     //brakemax
     brkMax = ((neg - (baseRegen * 32))/32);
     canSet(56, brkMax);
@@ -962,13 +875,12 @@ void idleThrottle() {
         canSet(64, 0); //Sets idlemode to alwayson when inverter is in "run"
     }
  
-    idleRamp.add(brakePedal);
-    idleThrot = map(idleRamp.get(), 1, 400, idleThrotMax, 0);
+    idleRamp.add(pot2);
+    idleThrot = map(idleRamp.get(), 600, 1020, idleThrotMax, 0);
     canSet(63, idleThrot);
     
     //incline compensation
     if (dir == 255) {
-        
         if (angleAvg.get() < 470) {
 
             idleThrotMax = map(angleAvg.get(), 410, 470, 27, 20);
@@ -976,9 +888,6 @@ void idleThrottle() {
         else {
             idleThrotMax = 20;
         }
-        
-
-        //idleThrotMax = 20;
             
     }
     else {
@@ -986,7 +895,7 @@ void idleThrottle() {
         idleThrotMax = 15;
     }
       
-    idleThrotMax = 22;
+    //idleThrotMax = 22;
     
     idleRPM = 1750; 
     canSet(62, idleRPM);
@@ -1003,122 +912,9 @@ void modeSwitch() {
 }
 
 
-void canread()
-{
-    char msgString[128];
-
-    digitalWrite(led, HIGH);
-    Can0.read(inMsg);
-    Serial.print(millis());
-    if ((inMsg.id & 0x80000000) == 0x80000000)    // Determine if ID is standard (11 bits) or extended (29 bits)
-        sprintf(msgString, "Extended ID: 0x%.8lX  DLC: %1d  Data:", (inMsg.id & 0x1FFFFFFF), inMsg.len);
-    else
-        sprintf(msgString, ",0x%.3lX,false,%1d", inMsg.id, inMsg.len);
-
-    Serial.print(msgString);
-
-    if ((inMsg.id & 0x40000000) == 0x40000000) {  // Determine if message is a remote request frame.
-        sprintf(msgString, " REMOTE REQUEST FRAME");
-        Serial.print(msgString);
-    }
-    else {
-        for (byte i = 0; i < inMsg.len; i++) {
-            sprintf(msgString, ", 0x%.2X", inMsg.buf[i]);
-            Serial.print(msgString);
-        }
-    }
-
-
-    Serial.println();
-    digitalWrite(led, LOW);
-}
-
-void powerSteer() {
-    if (run == 1) {
-        digitalWrite(steerInit, HIGH);
-    }
-    else {
-        digitalWrite(steerInit, LOW);
-    }
-
-}
-
-void shift_dir() {
-
-    /*
-    can rx canio 300 0 5 32
-    Bit 0: cruise
-    Bit 1: start
-    Bit 2: brake
-    Bit 3: forward
-    Bit 4: reverse
-    Bit 5: bms
-    00010000 Forward 0x10
-    00001000 Reverse 0x08
-    */
 
 
 
-    switch (screen)
-    {
-    case 7: //reverse
-        shift = REVERSE;
-        break;
-
-    case 9: //reverse
-        shift = REVERSE;
-        break;
-
-    case 6: //nuetral
-        shift = NUETRAL;
-        break;
-
-    case 11: //nuetral
-        shift = NUETRAL;
-        break;
-
-    case 8: // forward
-        shift = FORWARD;
-        break;
-
-    case 10: // forward
-        shift = FORWARD;
-        break;
-
-    default:
-        break;
-    }
-
-
-    switch (shift)
-    {
-    case FORWARD:
-        msg.id = 0x113;
-        msg.len = 1;
-        msg.buf[0] = 0x10;
-        Can0.write(msg);
-        break;
-
-    case NUETRAL:
-        msg.id = 0x113;
-        msg.len = 1;
-        msg.buf[0] = 0x00;
-        Can0.write(msg);
-        break;
-
-    case REVERSE:
-        msg.id = 0x113; //275 dec
-        msg.len = 1;
-        msg.buf[0] = 0x08;
-        Can0.write(msg);
-        break;
-
-    default:
-        break;
-    }
-
-
-}
 
 
 

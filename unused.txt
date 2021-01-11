@@ -1,0 +1,170 @@
+float temp = 0.00;
+float pack = 0.00;
+float cellh = 0.000;
+float celll = 0.000;
+float temp2 = 0.00;
+float pack2 = 0.00;
+float cellh2 = 0.000;
+float celll2 = 0.000;
+unsigned long time_now = 0;
+
+unsigned char mes[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+char msgString[128];                        // Array to store serial string
+
+
+
+
+//////////////////////from setup():////////////////////////////////////////////
+///////////////////////////  DATA INPUT PARSING //////////////////////////
+
+
+const byte numChars = 120;
+char receivedChars[numChars];
+char tempChars[numChars];        // temporary array for use when parsing
+char incomingData[numChars] = { 0 };
+const byte numChars2 = 120;
+char receivedChars2[numChars];
+char tempChars2[numChars];        // temporary array for use when parsing
+char incomingData2[numChars] = { 0 };
+
+boolean newData = false;
+boolean newData2 = false;
+
+
+
+
+
+
+///////////////////////////////from loop()://///////////////////////////////
+
+
+    /*getData();
+    if (newData == true) {
+        strcpy(tempChars, receivedChars);
+        // this temporary copy is necessary to protect the original data
+        //   because strtok() used in parseData() replaces the commas with \0
+        parse_BMS_1();
+        newData = false;
+    
+    }
+    if (newData2 == true) {
+        strcpy(tempChars2, receivedChars2);
+        // this temporary copy is necessary to protect the original data
+        //   because strtok() used in parseData() replaces the commas with \0
+        parse_BMS_2();
+        newData2 = false;
+
+    }*/
+
+    /////////////////////////////////////////////////////////////////////////////////
+
+
+void getData() {
+
+    static boolean recvInProgress = false;
+    static boolean recvInProgress2 = false;
+    static byte ndx = 0;
+    static byte ndx2 = 0;
+    char startMarker = '$';
+    char endMarker = '%';
+    char rc;
+    char rc2;
+
+    while (Serial1.available() > 0 && newData == false) {
+        rc = Serial1.read();
+
+        if (recvInProgress == true) {
+            if (rc != endMarker) {
+                receivedChars[ndx] = rc;
+                ndx++;
+                if (ndx >= numChars) {
+                    ndx = numChars - 1;
+                }
+            }
+            else {
+                receivedChars[ndx] = '\0'; // terminate the string
+                recvInProgress = false;
+                ndx = 0;
+                newData = true;
+            }
+            yield();
+        }
+        else if (rc == startMarker) {
+            recvInProgress = true;
+            yield();
+        }
+    }
+    //////////////////////////////////////////////////////////////////////
+    while (Serial4.available() > 0 && newData2 == false) {
+        rc2 = Serial4.read();
+        if (recvInProgress2 == true) {
+            if (rc2 != endMarker) {
+                receivedChars2[ndx2] = rc2;
+                ndx2++;
+                if (ndx2 >= numChars2) {
+                    ndx2 = numChars2 - 1;
+                }
+            }
+            else {
+                receivedChars2[ndx2] = '\0'; // terminate the string
+                recvInProgress2 = false;
+                ndx2 = 0;
+                newData2 = true;
+            }
+            yield();
+        }
+        else if (rc2 == startMarker) {
+            recvInProgress2 = true;
+            yield();
+        }
+    }
+}
+
+
+void parse_BMS_1() {
+    //////////////////////// Serial data BMS 1 //////////////////////////////
+    char* strtokIndx; // this is used by strtok() as an index
+
+    strtokIndx = strtok(tempChars, ",");      // get the first part - the string
+    strcpy(incomingData, strtokIndx); // copy it to messageFromPC
+
+    strtokIndx = strtok(NULL, ","); //1 this continues where the previous call left off
+    temp = atof(strtokIndx);
+
+    strtokIndx = strtok(NULL, ","); //2
+    pack = atof(strtokIndx);
+
+    strtokIndx = strtok(NULL, ","); //3
+    cellh = atof(strtokIndx);
+
+    strtokIndx = strtok(NULL, ","); //4
+    celll = atof(strtokIndx);
+}
+
+
+void parse_BMS_2() {
+    /////////////////// Serial data BMS 2 /////////////////////////
+    char* strtokIndx2; // this is used by strtok() as an index
+
+    strtokIndx2 = strtok(tempChars, ",");      // get the first part - the string
+    strcpy(incomingData2, strtokIndx2); // copy it to messageFromPC
+
+    strtokIndx2 = strtok(NULL, ","); //1 this continues where the previous call left off
+    temp2 = atof(strtokIndx2);
+
+    strtokIndx2 = strtok(NULL, ","); //2
+    pack2 = atof(strtokIndx2);
+
+    strtokIndx2 = strtok(NULL, ","); //3
+    cellh2 = atof(strtokIndx2);
+
+    strtokIndx2 = strtok(NULL, ","); //4
+    celll2 = atof(strtokIndx2);
+}
+
+void resetEsp() {
+
+    //pinMode(30, OUTPUT);
+    //delay(1);
+    //pinMode(30, INPUT);
+}
