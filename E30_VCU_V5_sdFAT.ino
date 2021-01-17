@@ -32,7 +32,7 @@ const int inclinometer = A1;
 
 ///////////////////timer////////////////
 IntervalTimer encoder;
-//test
+
 /////////// Variables //////////////
 int rpm;
 int mtemp;
@@ -256,7 +256,7 @@ void loop() {
     {
         Can0.read(inMsg);
         decodeCAN(); 
-        if (charge == 2) {
+        if (charge == 0) {
             shift_dir();
             chill();
             idleThrottle();
@@ -275,7 +275,7 @@ void loop() {
     angleAvg.add(angle);
 
 
-    if (charge == 2) {
+    if (charge == 0) {
 
         boostMap();
     
@@ -380,9 +380,9 @@ void decodeCAN() {
         packVolt = ((inMsg.buf[2] << 8) + inMsg.buf[1]);
     }   
 
-    else if (inMsg.id == 0x2D0) {
+    else if (inMsg.id == 0x109) {
         
-        charge = (inMsg.buf[0]);
+        charge = (inMsg.buf[4]);
     }
 
     else if (inMsg.id == 0x12D) {
@@ -450,14 +450,14 @@ void batteryTender() {
 
 void waterpump()
 {
-    if (charge == 2) {
+    if (charge == 0) {
         if (dir == 255) {
             wpduty = map(pot, 700, 4095, 50, 255);
             analogWrite(wpump, wpduty);
         }
         else { analogWrite(wpump, 0); }
     }
-    else if (charge == 1) {
+    else if (charge == 5) {
         
         analogWrite(wpump, 100);
     }  
@@ -465,10 +465,10 @@ void waterpump()
 
 void charging() {
 
-    if (charge == 1) {
+    if (charge == 5) {
         digitalWrite(backfeed, HIGH);
     }
-    else if (charge == 2){
+    else if (charge == 0){
         batteryTender();
         }
     }
@@ -546,6 +546,9 @@ void outputs() {
 
     Serial3.print("backfeed: ");
     Serial3.println(digitalRead(backfeed));
+
+    Serial3.print("Charge: ");
+    Serial3.println(charge);
 
 
     
